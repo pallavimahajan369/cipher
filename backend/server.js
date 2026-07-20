@@ -1,7 +1,5 @@
 import express from "express";
-import path from "path";
 import dns from "dns";
-import { createServer as createViteServer } from "vite";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 dotenv.config();
@@ -344,19 +342,7 @@ async function bootstrapServer() {
   // Trigger MySQL dynamic initialization and catalog seed validation
   await setupDatabase();
 
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
+  
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Aura API Gateway] Online. Relaying to internal service registries on host 0.0.0.0, port ${PORT}`);

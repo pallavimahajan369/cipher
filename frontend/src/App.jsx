@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { 
   X, Minus, Plus, Trash, CreditCard, Sparkles, Star, 
   Send, CheckCircle, Clock, Gift, ShieldCheck, Heart,
-  User as UserIcon, Lock, Mail
+  User as UserIcon, Lock, Mail, Settings, Camera
 } from "lucide-react";
 import Navbar from "./components/Navbar";
 import BannerCarousel from "./components/BannerCarousel";
@@ -74,6 +74,137 @@ export default function App() {
   const [orders, setOrders] = useState([]);
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [orderSearchQuery, setOrderSearchQuery] = useState("");
+
+  // --- Wishlist and Toast States ---
+  const [isWishlistOpen, setIsWishlistOpen] = useState(false);
+  const [wishlist, setWishlist] = useState([]);
+  const [toasts, setToasts] = useState([]);
+
+  // --- Profile Modal States ---
+  const [isProfileModalOpen, setIsProfileModalOpen]   = useState(false);
+  const [profileForm, setProfileForm]                 = useState({ fullName: "", preferredVibe: "All", avatarUrl: "" });
+  const [profileError, setProfileError]               = useState("");
+  const [profileSuccess, setProfileSuccess]           = useState("");
+  const [isSavingProfile, setIsSavingProfile]         = useState(false);
+
+  // Ref for debounced cart save
+  const cartSaveTimer = useRef(null);
+
+  // Load user-specific wishlist when currentUser updates or logs out
+  useEffect(() => {
+    if (currentUser && currentUser.username) {
+      const token = localStorage.getItem("aura_jwt_token");
+      if (token) {
+        // Prefer DB wishlist
+        fetch("/api/wishlist", { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.json())
+          .then(d => { if (Array.isArray(d.items)) setWishlist(d.items); })
+          .catch(() => {
+            try {
+              const saved = localStorage.getItem(`aura_curated_wishlist_${currentUser.username}`);
+              setWishlist(saved ? JSON.parse(saved) : []);
+            } catch (_) { setWishlist([]); }
+          });
+      } else {
+        try {
+          const saved = localStorage.getItem(`aura_curated_wishlist_${currentUser.username}`);
+          setWishlist(saved ? JSON.parse(saved) : []);
+        } catch (_) { setWishlist([]); }
+      }
+    } else {
+      setWishlist([]);
+    }
+  }, [currentUser]);
+
+  const addToast = (message, type = "success") => {
+    const id = Date.now() + Math.random().toString(36).substr(2, 5);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
+
+  const handleToggleWishlist = (product) => {
+    if (!currentUser) {
+      addToast("Please sign in or register to save items to your wishlist.", "info");
+      setLoginMode('login');
+      setIsLoginModalOpen(true);
+      return;
+    }
+    const exists = wishlist.some((item) => item.id === product.id);
+    let updated;
+    if (exists) {
+      updated = wishlist.filter((item) => item.id !== product.id);
+      addToast(`Removed "${product.name}" from your wishlist.`, "info");
+    } else {
+      updated = [...wishlist, product];
+      addToast(`Saved "${product.name}" to your wishlist.`, "success");
+    }
+    setWishlist(updated);
+    // Persist to DB (fire-and-forget) and localStorage fallback
+    const token = localStorage.getItem("aura_jwt_token");
+    if (token) {
+      fetch("/api/wishlist", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ items: updated })
+      }).catch(() => {});
+    }
+    try {
+      localStorage.setItem(`aura_curated_wishlist_${currentUser.username}`, JSON.stringify(updated));
+    } catch (_) {}
+  };
+
+  const fetchOrders = async () => {
+    try {
+      const token = localStorage.getItem("aura_jwt_token");
+      if (!token) return;
+      // Use /api/orders for regular users, /api/admin/orders for admins (handled by AdminPanel)
+      const res = await fetch("/api/orders", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const mappedOrders = (data.orders || []).map(o => {
+          const sub  = (o.cartItems || []).reduce((acc, it) => acc + (it.price || it.product?.price || 0) * (it.quantity || 1), 0);
+          const disc = 0;
+          const tx   = (sub - disc) * 0.08;
+          const sh   = (sub > 150 || sub === 0) ? 0 : 15;
+          const tot  = sub - disc + tx + sh;
+
+          return {
+            id: o.orderId,
+            date: o.date ? new Date(o.date).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+            items: (o.cartItems || []).map(it => ({
+              productId:     it.productId || it.product?.id,
+              productName:   it.productName || it.product?.name || "Masterpiece Design",
+              price:         it.price || it.product?.price || 0,
+              quantity:      it.quantity || 1,
+              selectedColor: it.selectedColor,
+              selectedSize:  it.selectedSize,
+              image:         it.image || it.product?.image
+            })),
+            subtotal: sub, discount: disc, tax: tx, shipping: sh, total: tot,
+            status:        o.deliveryStatus || "Processing",
+            paymentStatus: o.paymentStatus  || "Completed",
+            shippingAddress: {
+              fullName:    o.shippingFullName,
+              addressLine: o.shippingAddressLine,
+              city:        o.shippingCity,
+              postalCode:  o.shippingPostalCode,
+              country:     "United States"
+            },
+            paymentMethod: `Simulated: ${o.authCode}`
+          };
+        });
+        setOrders(mappedOrders);
+        localStorage.setItem("aura_curated_orders", JSON.stringify(mappedOrders));
+      }
+    } catch (e) {
+      console.error("Failed loading order history:", e);
+    }
+  };
 
   // --- AI Advisor Chat States ---
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
@@ -89,7 +220,7 @@ export default function App() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const chatBottomRef = useRef(null);
 
-  // --- Load Products and Orders on Boot ---
+  // --- Load Products, Orders, and Cart on Boot ---
   useEffect(() => {
     fetchProducts();
     
@@ -97,22 +228,58 @@ export default function App() {
     try {
       const savedUser = localStorage.getItem("aura_current_user");
       if (savedUser) {
-        setCurrentUser(JSON.parse(savedUser));
+        const user = JSON.parse(savedUser);
+        setCurrentUser(user);
+        
+        // Prefill shipping/reviews
+        setShippingForm(prev => ({ ...prev, fullName: user.fullName }));
+        setReviewAuthor(user.fullName);
+
+        // Fetch orders and cart for the restored session
+        fetchOrders();
+        const token = localStorage.getItem("aura_jwt_token");
+        if (token) {
+          fetch("/api/cart", { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => r.json())
+            .then(d => { if (Array.isArray(d.items) && d.items.length > 0) setCart(d.items); })
+            .catch(() => {});
+
+          // Sync latest profile data
+          fetch("/api/user/profile", { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => r.json())
+            .then(d => { 
+              if (d.user) { setCurrentUser(d.user); localStorage.setItem("aura_current_user", JSON.stringify(d.user)); }
+            })
+            .catch(() => {});
+        }
       }
     } catch (e) {
       console.error("Failed loading active user session", e);
     }
     
-    // Load local storage orders if any exist
+    // Load local storage orders as immediate fallback
     try {
       const savedOrders = localStorage.getItem("aura_curated_orders");
-      if (savedOrders) {
-        setOrders(JSON.parse(savedOrders));
-      }
+      if (savedOrders) setOrders(JSON.parse(savedOrders));
     } catch (e) {
       console.error("Failed loading order history", e);
     }
   }, []);
+
+  // --- Auto-save cart to DB whenever it changes (debounced 800ms) ---
+  useEffect(() => {
+    if (!currentUser) return;
+    if (cartSaveTimer.current) clearTimeout(cartSaveTimer.current);
+    cartSaveTimer.current = setTimeout(() => {
+      const token = localStorage.getItem("aura_jwt_token");
+      if (!token) return;
+      fetch("/api/cart", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ items: cart })
+      }).catch(() => {});
+    }, 800);
+  }, [cart]);
 
   // Set default details when Selected Product shifts
   useEffect(() => {
@@ -165,7 +332,28 @@ export default function App() {
 
       setCurrentUser(data.user);
       localStorage.setItem("aura_current_user", JSON.stringify(data.user));
-      setAuthSuccess("Authentication approved. Welcome back!");
+      if (data.token) {
+        localStorage.setItem("aura_jwt_token", data.token);
+      }
+      setAuthSuccess(data.user.isAdmin ? "Access authorized. Redirecting to Admin Dashboard..." : "Authentication approved. Welcome back!");
+
+      // Load saved cart from DB
+      try {
+        const cartRes = await fetch("/api/cart", { headers: { Authorization: `Bearer ${data.token}` } });
+        const cartData = await cartRes.json();
+        if (Array.isArray(cartData.items) && cartData.items.length > 0) setCart(cartData.items);
+      } catch (_) {}
+
+      // Load orders from DB
+      await fetchOrders();
+
+      if (data.user.isAdmin) {
+        setIsAdminOpen(true);
+        setIsCartOpen(false);
+        setIsAdvisorOpen(false);
+        setIsOrdersOpen(false);
+        setIsWishlistOpen(false);
+      }
       
       // Auto-prefill shipping form
       setShippingForm((prev) => ({
@@ -222,7 +410,17 @@ export default function App() {
       // Automatically sign in the newly registered profile
       setCurrentUser(data.user);
       localStorage.setItem("aura_current_user", JSON.stringify(data.user));
+      if (data.token) {
+        localStorage.setItem("aura_jwt_token", data.token);
+      }
       setAuthSuccess("Member registered successfully! Entry granted.");
+
+      // Load cart from DB (likely empty for new user)
+      try {
+        const cartRes = await fetch("/api/cart", { headers: { Authorization: `Bearer ${data.token}` } });
+        const cartData = await cartRes.json();
+        if (Array.isArray(cartData.items) && cartData.items.length > 0) setCart(cartData.items);
+      } catch (_) {}
 
       // Auto-prefill shipping properties
       setShippingForm((prev) => ({
@@ -264,17 +462,28 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    // Clear the authentication sessions and tokens from local storage and memory
     setCurrentUser(null);
     localStorage.removeItem("aura_current_user");
+    localStorage.removeItem("aura_jwt_token");
+    localStorage.removeItem("aura_curated_orders");
+    sessionStorage.clear();
     
-    // Clear prefilled forms
-    setShippingForm((prev) => ({
-      ...prev,
-      fullName: ""
-    }));
+    setIsAdminOpen(false);
+    setIsOrdersOpen(false);
+    setIsWishlistOpen(false);
+    setIsCartOpen(false);
+    setIsProfileModalOpen(false);
+    setCart([]);
+    setOrders([]);
+    setWishlist([]);
+    
+    setShippingForm((prev) => ({ ...prev, fullName: "" }));
     setReviewAuthor("");
 
-    // Add logging state message to chatbot
+    window.history.pushState(null, "", "/");
+    window.history.replaceState(null, "", "/");
+
     setChatHistory((prev) => [
       ...prev,
       {
@@ -284,10 +493,64 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ]);
+    
+    setLoginMode('login');
+    setIsLoginModalOpen(true);
+    addToast("Logged out of the Aura Vault successfully. Redirected to Sign-In.", "info");
+  };
+
+  // --- Profile Update Handler ---
+  const handleProfileSave = async (e) => {
+    e.preventDefault();
+    setProfileError("");
+    setProfileSuccess("");
+    setIsSavingProfile(true);
+    try {
+      const token = localStorage.getItem("aura_jwt_token");
+      const res = await fetch("/api/user/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          fullName:      profileForm.fullName      || undefined,
+          preferredVibe: profileForm.preferredVibe || undefined,
+          avatarUrl:     profileForm.avatarUrl     || undefined
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Profile update failed.");
+      // Update in-memory user + localStorage
+      const updatedUser = { ...currentUser, ...data.user };
+      setCurrentUser(updatedUser);
+      localStorage.setItem("aura_current_user", JSON.stringify(updatedUser));
+      setProfileSuccess("Profile updated successfully!");
+      setTimeout(() => setIsProfileModalOpen(false), 1200);
+    } catch (err) {
+      setProfileError(err.message || "Could not save profile.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const openProfileModal = () => {
+    setProfileForm({
+      fullName:      currentUser?.fullName      || "",
+      preferredVibe: currentUser?.preferredVibe || "All",
+      avatarUrl:     currentUser?.avatarUrl     || ""
+    });
+    setProfileError("");
+    setProfileSuccess("");
+    setIsProfileModalOpen(true);
   };
 
   // --- Cart Actions ---
   const handleAddToCart = (product, color, size) => {
+    if (!currentUser) {
+      addToast("Please sign in or register to add curated items to your Cart Chamber.", "info");
+      setLoginMode('login');
+      setIsLoginModalOpen(true);
+      return;
+    }
+
     const itemColor = color || product.colors[0] || "";
     const itemSize = size || product.sizes?.[0] || "";
     const cartItemId = `${product.id}-${itemColor}-${itemSize}`;
@@ -308,23 +571,38 @@ export default function App() {
       }];
     });
 
+    addToast(`Added "${product.name}" to your Cart Chamber.`, "success");
+
     // Automatically trigger notification side effects
     setIsCartOpen(true);
   };
 
   const handleUpdateQuantity = (itemId, amount) => {
+    const item = cart.find((i) => i.id === itemId);
+    if (!item) return;
+
+    const nextQty = item.quantity + amount;
+    if (nextQty > 0) {
+      addToast(`Modified quantity for "${item.product.name}".`, "info");
+    } else {
+      addToast(`Removed "${item.product.name}" from your Cart Chamber.`, "warning");
+    }
+
     setCart((prevCart) => {
-      return prevCart.map((item) => {
-        if (item.id === itemId) {
-          const nextQty = item.quantity + amount;
-          return nextQty > 0 ? { ...item, quantity: nextQty } : item;
+      return prevCart.map((it) => {
+        if (it.id === itemId) {
+          return nextQty > 0 ? { ...it, quantity: nextQty } : it;
         }
-        return item;
-      }).filter((item) => item.quantity > 0);
+        return it;
+      }).filter((it) => it.quantity > 0);
     });
   };
 
   const handleRemoveFromCart = (itemId) => {
+    const target = cart.find((item) => item.id === itemId);
+    if (target) {
+      addToast(`Removed "${target.product.name}" from your Cart Chamber.`, "info");
+    }
     setCart((prevCart) => prevCart.filter((item) => item.id !== itemId));
   };
 
@@ -372,9 +650,13 @@ export default function App() {
     setReviewError("");
 
     try {
+      const token = localStorage.getItem("aura_jwt_token");
       const res = await fetch(`/api/products/${selectedProduct.id}/review`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           author: reviewAuthor,
           rating: reviewRating,
@@ -419,12 +701,19 @@ export default function App() {
     setIsProcessingCheckout(true);
 
     try {
+      const token = localStorage.getItem("aura_jwt_token");
       const res = await fetch("/api/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           cartItems: cart,
-          shippingAddress: shippingForm,
+          shippingAddress: {
+            ...shippingForm,
+            email: currentUser?.email || "guest@auramembers.com"
+          },
           paymentDetails: creditCardForm
         })
       });
@@ -456,14 +745,13 @@ export default function App() {
           paymentMethod: `Card ending in ${creditCardForm.cardNumber.slice(-4)}`
         };
 
-        const updatedOrders = [newOrder, ...orders];
-        setOrders(updatedOrders);
-        localStorage.setItem("aura_curated_orders", JSON.stringify(updatedOrders));
-
         setCart([]);
         setActiveDiscount(null);
         setLastPlacedOrder(newOrder);
         setIsCheckoutOpen(false);
+        addToast(`Vault Order ${data.orderId} Authorized! Spawning luxury track.`, "success");
+        await fetchProducts();
+        await fetchOrders();
       }
     } catch (err) {
       setCheckoutError("Secure checkout service lost. Please retry.");
@@ -541,39 +829,67 @@ export default function App() {
       {/* Dynamic Navigation Bar Component */}
       <Navbar 
         cartCount={cart.reduce((s, c) => s + c.quantity, 0)} 
-        onOpenCart={() => { setIsCartOpen(true); setIsAdvisorOpen(false); setIsOrdersOpen(false); setIsAdminOpen(false); }}
-        onOpenAdvisor={() => { setIsAdvisorOpen(true); setIsCartOpen(false); setIsOrdersOpen(false); setIsAdminOpen(false); }}
+        onOpenCart={() => { setIsCartOpen(true); setIsAdvisorOpen(false); setIsOrdersOpen(false); setIsAdminOpen(false); setIsWishlistOpen(false); }}
+        onOpenAdvisor={() => { setIsAdvisorOpen(true); setIsCartOpen(false); setIsOrdersOpen(false); setIsAdminOpen(false); setIsWishlistOpen(false); }}
         activeCategory={activeCategory}
         setActiveCategory={(cat) => {
           setActiveCategory(cat);
-          setIsAdminOpen(false); // Close Admin Panel when shifting catalog category
+          setIsAdminOpen(false);
+          setIsWishlistOpen(false);
           // Scroll smoothly to catalog
           const target = document.getElementById("catalog-grid-row");
           if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
         }}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
-        onViewOrders={() => { setIsOrdersOpen(true); setIsCartOpen(false); setIsAdvisorOpen(false); setIsAdminOpen(false); }}
+        onViewOrders={() => {
+          if (!currentUser) {
+            addToast("Please sign in or register to track and view past orders.", "info");
+            setLoginMode('login');
+            setIsLoginModalOpen(true);
+            return;
+          }
+          setIsOrdersOpen(true);
+          setIsCartOpen(false);
+          setIsAdvisorOpen(false);
+          setIsAdminOpen(false);
+          setIsWishlistOpen(false);
+        }}
         hasOrders={orders.length > 0}
         currentUser={currentUser}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
         isAdminOpen={isAdminOpen}
-        onToggleAdmin={() => {
-          setIsAdminOpen(!isAdminOpen);
-          setIsCartOpen(false);
-          setIsAdvisorOpen(false);
-          setIsOrdersOpen(false);
+        onOpenAdmin={(isOpen) => {
+          setIsAdminOpen(isOpen);
+          if (isOpen) {
+            setIsCartOpen(false);
+            setIsAdvisorOpen(false);
+            setIsOrdersOpen(false);
+            setIsWishlistOpen(false);
+          }
         }}
+        wishlistCount={wishlist.length}
+        onOpenWishlist={() => { setIsWishlistOpen(true); setIsCartOpen(false); setIsAdvisorOpen(false); setIsOrdersOpen(false); setIsAdminOpen(false); }}
       />
 
-      {/* Admin Module Division */}
-      {isAdminOpen ? (
-        <AdminPanel onProductChange={fetchProducts} />
+      {/* Main Container Stage */}
+      {isAdminOpen && currentUser && currentUser.isAdmin ? (
+        <main id="aura-admin-main" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
+          <div className="flex justify-start mb-4">
+            <button 
+              onClick={() => setIsAdminOpen(false)}
+              className="px-5 py-2.5 bg-white/5 border border-white/10 text-[10px] font-mono font-bold uppercase tracking-widest text-[#C5A059] hover:bg-[#C5A059] hover:text-[#0A0A0A] hover:border-transparent transition-all cursor-pointer"
+            >
+              ← Return to Showroom Catalog
+            </button>
+          </div>
+          <AdminPanel onProductChange={() => { fetchProducts(); fetchOrders(); }} />
+        </main>
       ) : (
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 space-y-12">
-        
-        {/* Banner Cinematic Slider */}
+          
+          {/* Banner Cinematic Slider */}
         <BannerCarousel 
           onCategorySelect={(cat) => {
             setActiveCategory(cat);
@@ -641,6 +957,8 @@ export default function App() {
                   product={prod} 
                   onSelectProduct={setSelectedProduct} 
                   onAddToCartDirect={handleAddToCart}
+                  isWishlisted={wishlist.some(w => w.id === prod.id)}
+                  onToggleWishlist={handleToggleWishlist}
                 />
               ))}
             </div>
@@ -811,7 +1129,16 @@ export default function App() {
                   </div>
 
                   <button 
-                    onClick={() => { setIsCartOpen(false); setIsCheckoutOpen(true); }}
+                    onClick={() => {
+                      if (!currentUser) {
+                        addToast("Please sign in or register to proceed to checkout.", "info");
+                        setLoginMode('login');
+                        setIsLoginModalOpen(true);
+                        return;
+                      }
+                      setIsCartOpen(false); 
+                      setIsCheckoutOpen(true); 
+                    }}
                     className="w-full bg-[#C5A059] hover:bg-[#D1B072] text-[#0A0A0A] font-bold text-xs uppercase tracking-widest py-4 transition shadow-lg"
                   >
                     Proceed to Simulated Checkout
@@ -819,6 +1146,80 @@ export default function App() {
                   <p className="text-center text-[9px] text-white/30 tracking-wider">SECURE MOCK CRYPTOGRAPHY TRANSACTION PANEL</p>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- SIDEBAR 1.5: CURATED WISHLIST DRAWER --- */}
+      {isWishlistOpen && (
+        <div className="fixed inset-0 z-50 overflow-hidden" id="wishlist-sidebar-container">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm transition-opacity" onClick={() => setIsWishlistOpen(false)} />
+          <div className="absolute inset-y-0 right-0 max-w-full flex pl-10">
+            <div className="w-screen max-w-md bg-[#121212] border-l border-white/10 shadow-2xl flex flex-col animate-slideInRight text-white h-full">
+              
+              {/* Header */}
+              <div className="h-20 border-b border-white/10 flex items-center justify-between px-6 bg-[#0A0A0A]">
+                <div className="flex items-center gap-2">
+                  <span className="font-serif text-lg tracking-tighter italic text-[#C5A059]">Saved Masterpieces</span>
+                  <span className="text-[10px] font-mono text-white/50 uppercase tracking-widest bg-white/5 px-2 py-0.5 border border-white/15">
+                    {wishlist.length} Items
+                  </span>
+                </div>
+                <button onClick={() => setIsWishlistOpen(false)} className="p-2 border border-white/10 text-white/50 hover:text-white hover:bg-white/5 cursor-pointer">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {/* Items List */}
+              <div className="flex-grow overflow-y-auto p-6 space-y-4 no-scrollbar">
+                {wishlist.length === 0 ? (
+                  <div className="h-full flex flex-col justify-center items-center text-center opacity-65 py-24">
+                    <Heart className="h-10 w-10 text-[#C5A059]/45 mb-3" />
+                    <p className="text-sm font-serif italic text-white/40 mb-3">Your wishlist is currently blank.</p>
+                    <button 
+                      onClick={() => setIsWishlistOpen(false)} 
+                      className="text-xs uppercase tracking-widest text-[#C5A059] border border-[#C5A059]/30 px-5 py-2.5 hover:bg-[#C5A059]/10 transition-all font-mono cursor-pointer"
+                    >
+                      Browse curations
+                    </button>
+                  </div>
+                ) : (
+                  wishlist.map((product) => (
+                    <div key={product.id} className="flex gap-4 bg-[#0A0A0A] p-4 border border-white/5 rounded-none relative group text-left">
+                      <div className="h-20 w-16 bg-[#1C1C1C] flex-shrink-0 border border-white/10">
+                        <img src={product.image} className="h-full w-full object-cover filter brightness-90" alt={product.name} />
+                      </div>
+                      <div className="flex-grow flex flex-col min-w-0 justify-between">
+                        <div>
+                          <span className="text-[8px] uppercase tracking-[0.2em] text-[#C5A059] font-mono leading-none">{product.category}</span>
+                          <h4 className="text-xs font-medium text-white/85 truncate font-display mt-0.5">{product.name}</h4>
+                          <p className="text-[10px] font-mono text-[#C5A059] mt-1">${product.price.toFixed(2)}</p>
+                        </div>
+                        
+                        <div className="flex gap-2.5 mt-2.5">
+                          <button
+                            onClick={() => {
+                              handleAddToCart(product, product.colors[0], product.sizes?.[0]);
+                              setIsWishlistOpen(false);
+                            }}
+                            className="bg-white hover:bg-[#C5A059] text-black text-[9px] font-mono tracking-wider px-3 py-1.5 font-bold uppercase transition cursor-pointer"
+                          >
+                            Acquire
+                          </button>
+                          <button
+                            onClick={() => handleToggleWishlist(product)}
+                            className="text-red-400 hover:text-red-300 text-[9px] font-mono tracking-wider px-2 py-1.5 bg-red-950/20 hover:bg-red-950/40 border border-red-500/20 hover:border-red-500/30 font-bold uppercase transition cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
             </div>
           </div>
         </div>
@@ -959,91 +1360,217 @@ export default function App() {
             <div className="w-screen max-w-md bg-[#121212] border-l border-white/10 shadow-2xl flex flex-col animate-slideInRight text-white h-full">
               
               <div className="h-20 border-b border-white/10 flex items-center justify-between px-6 bg-[#0A0A0A]">
-                <div className="flex items-center gap-2">
-                  <span className="font-serif text-lg tracking-tighter italic">Receipt Book</span>
-                  <span className="text-[10px] font-mono text-[#E5C079] uppercase tracking-widest bg-white/5 px-2 py-0.5 border border-white/15">
-                     Archived Tracks
-                  </span>
+                <div className="flex flex-col text-left">
+                  <div className="flex items-center gap-2">
+                    <span className="font-serif text-base tracking-tighter italic">Receipt Book</span>
+                    <span className="text-[9px] font-mono text-[#C5A059] uppercase tracking-widest bg-[#C5A059]/10 px-1.5 py-0.5 border border-[#C5A059]/30">
+                       Real-time Tracking
+                    </span>
+                  </div>
+                  {currentUser && (
+                    <span className="text-[10px] tracking-wide text-white/40 font-mono mt-0.5">
+                      Vault Profile: {currentUser.fullName.split(" ")[0]}
+                    </span>
+                  )}
                 </div>
                 <button onClick={() => setIsOrdersOpen(false)} className="p-2 border border-white/10 text-white/50 hover:text-white hover:bg-white/5">
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
 
+              {/* Search Bar section for tracking lookup */}
+              <div className="p-4 bg-[#0A0A0A] border-b border-white/10 text-left">
+                <label className="block text-[9px] text-white/40 uppercase font-mono tracking-wider mb-1.5">
+                  Search Order ID, Name, or shipping parameters:
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="e.g. AURA-810571..."
+                    value={orderSearchQuery}
+                    onChange={(e) => setOrderSearchQuery(e.target.value)}
+                    className="w-full text-xs pl-3 pr-8 py-2.5 bg-[#121212] hover:bg-[#161616] text-white placeholder-white/30 border border-white/10 focus:border-[#C5A059]/60 outline-none font-mono"
+                  />
+                  {orderSearchQuery && (
+                    <button 
+                      onClick={() => setOrderSearchQuery("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-white/40 hover:text-white"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Order Lists dynamic rendering */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar">
-                {orders.length === 0 ? (
-                  <div className="h-full flex flex-col justify-center items-center text-center text-white/40">
-                    <Clock className="h-10 w-10 text-white/20 mb-3" />
-                    <p className="text-sm font-serif italic">Your ledger is completely offline.</p>
-                    <p className="text-[10px] text-white/20 uppercase mt-1">Submit a simulated order to spawn a receipt.</p>
-                  </div>
-                ) : (
-                  orders.map(order => (
-                    <div key={order.id} className="border border-white/10 bg-[#0A0A0A] p-4 text-xs font-mono">
-                      
-                      {/* Top Bar Header block */}
-                      <div className="flex justify-between border-b border-white/5 pb-2 mb-3">
-                        <div>
-                          <p className="text-[#C5A059] font-bold text-[11px]">{order.id}</p>
-                          <p className="text-[9px] text-white/40">{order.date}</p>
-                        </div>
-                        <div className="text-right">
-                          <span className="px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-[9px] uppercase tracking-wider">
-                            {order.status}
-                          </span>
-                        </div>
-                      </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-5 no-scrollbar text-left">
+                {(() => {
+                  const filtered = orders.filter(order => {
+                    const q = orderSearchQuery.trim().toLowerCase();
+                    if (q) {
+                      return (
+                        order.id.toLowerCase().includes(q) || 
+                        order.shippingAddress?.fullName?.toLowerCase().includes(q) ||
+                        order.shippingAddress?.city?.toLowerCase().includes(q) ||
+                        (order.items && order.items.some(item => item.productName.toLowerCase().includes(q)))
+                      );
+                    }
+                    if (currentUser?.isAdmin) {
+                      return true; // admin sees all
+                    }
+                    if (currentUser) {
+                      return (
+                        order.shippingAddress?.fullName?.toLowerCase() === currentUser.fullName?.toLowerCase()
+                      );
+                    }
+                    // Guest visitor sees nothing from previous customers
+                    return false;
+                  });
 
-                      {/* Items */}
-                      <div className="space-y-2 mb-4">
-                        {order.items.map((item, idx) => (
-                          <div key={idx} className="flex justify-between text-white/70">
-                            <span className="truncate max-w-[200px]">
-                              {item.quantity}x {item.productName}
-                              {item.selectedColor && <span className="text-[9px] text-white/30 uppercase ml-1">({item.selectedColor})</span>}
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="h-4/5 flex flex-col justify-center items-center text-center text-white/40 py-10">
+                        <Clock className="h-8 w-8 text-[#C5A059]/40 mb-3 animate-pulse" />
+                        <p className="text-xs font-serif italic">No archived tracks match your query.</p>
+                        <p className="text-[9px] text-white/20 uppercase mt-2 max-w-xs leading-relaxed">
+                          {orderSearchQuery 
+                            ? "Verify the spelling of your Order number, or try without search filters."
+                            : "Log in or check out with items to associate a brand track to your index."}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return filtered.map(order => {
+                    // Helper to compute active tracker stages
+                    // Stages: 1 = Placed, 2 = Packaging, 3 = Shipped/In Transit, 4 = Delivered
+                    const currentStatus = order.status ? order.status.toLowerCase() : "processing";
+                    let activeIndex = 1; // "Processing"
+                    if (currentStatus.includes("ship") || currentStatus.includes("transit") || currentStatus.includes("route")) {
+                      activeIndex = 3;
+                    } else if (currentStatus.includes("pack") || currentStatus.includes("prepar")) {
+                      activeIndex = 2;
+                    } else if (currentStatus.includes("deliv") || currentStatus.includes("complet")) {
+                      activeIndex = 4;
+                    }
+
+                    return (
+                      <div key={order.id} className="border border-white/5 bg-[#0A0A0A]/80 p-4 font-mono text-xs hover:border-[#C5A059]/20 transition-all duration-300">
+                        
+                        {/* Top Bar Header block */}
+                        <div className="flex justify-between border-b border-white/5 pb-2.5 mb-3">
+                          <div>
+                            <p className="text-[#C5A059] font-bold text-[11px] font-mono tracking-wider">{order.id}</p>
+                            <p className="text-[9px] text-white/30 font-mono mt-0.5">{order.date}</p>
+                          </div>
+                          <div className="text-right">
+                            <span className={`px-2.5 py-0.5 font-bold uppercase text-[8px] tracking-widest font-sans border ${
+                              activeIndex === 4 
+                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
+                                : activeIndex === 3
+                                ? "bg-blue-500/10 border-blue-500/30 text-blue-400"
+                                : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                            }`}>
+                              {order.status}
                             </span>
-                            <span>${(item.price * item.quantity).toFixed(2)}</span>
                           </div>
-                        ))}
-                      </div>
-
-                      {/* Totals Breakdown list */}
-                      <div className="space-y-1 text-white/40 border-t border-white/5 pt-3 mb-2 font-mono text-[10px]">
-                        <div className="flex justify-between">
-                          <span>Subtotal</span>
-                          <span>${order.subtotal.toFixed(2)}</span>
                         </div>
-                        {order.discount > 0 && (
-                          <div className="flex justify-between text-emerald-400">
-                            <span>Promo Discount</span>
-                            <span>-${order.discount.toFixed(2)}</span>
+
+                        {/* Shipment Segment visual progress tracking lines */}
+                        <div className="my-4 px-1 py-1 bg-white/[0.02] border border-white/5">
+                          <p className="text-[8px] uppercase tracking-wider font-mono text-[#C5A059] mb-2 font-bold px-1.5 pt-1">
+                            LOGISTICS STATUS TRACKING
+                          </p>
+                          <div className="grid grid-cols-4 gap-1 text-[8px] uppercase font-mono relative pb-1 pt-1.5 px-1.5">
+                            {/* Connective background line */}
+                            <div className="absolute top-[18px] left-[15px] right-[15px] h-[1px] bg-white/10 z-0" />
+                            
+                            {/* Line highlighter */}
+                            <div 
+                              className="absolute top-[18px] left-[15px] h-[1px] bg-[#C5A059]/80 transition-all duration-500 z-0"
+                              style={{ width: `${((activeIndex - 1) / 3) * 90}%` }}
+                            />
+
+                            <div className="flex flex-col items-center text-center relative z-10">
+                              <span className={`h-2.5 w-2.5 rounded-full mb-1 transition-all flex items-center justify-center font-bold ${
+                                activeIndex >= 1 ? "bg-[#C5A059] shadow-sm shadow-[#C5A059]" : "bg-[#252525]"
+                              }`} />
+                              <span className={activeIndex >= 1 ? "text-[#C5A059] font-bold" : "text-white/30"}>Placed</span>
+                            </div>
+
+                            <div className="flex flex-col items-center text-center relative z-10">
+                              <span className={`h-2.5 w-2.5 rounded-full mb-1 transition-all flex items-center justify-center font-bold ${
+                                activeIndex >= 2 ? "bg-[#C5A059] shadow-sm shadow-[#C5A059]" : "bg-[#252525]"
+                              }`} />
+                              <span className={activeIndex >= 2 ? "text-[#C5A059] font-bold" : "text-white/30"}>Packed</span>
+                            </div>
+
+                            <div className="flex flex-col items-center text-center relative z-10">
+                              <span className={`h-2.5 w-2.5 rounded-full mb-1 transition-all flex items-center justify-center font-bold ${
+                                activeIndex >= 3 ? "bg-[#C5A059] shadow-sm shadow-[#C5A059]" : "bg-[#252525]"
+                              }`} />
+                              <span className={activeIndex >= 3 ? "text-[#C5A059] font-bold" : "text-white/30"}>Transit</span>
+                            </div>
+
+                            <div className="flex flex-col items-center text-center relative z-10">
+                              <span className={`h-2.5 w-2.5 rounded-full mb-1 transition-all flex items-center justify-center font-bold ${
+                                activeIndex >= 4 ? "bg-emerald-500 shadow-sm shadow-emerald-500" : "bg-[#252525]"
+                              }`} />
+                              <span className={activeIndex >= 4 ? "text-emerald-400 font-bold" : "text-white/30"}>Arrived</span>
+                            </div>
                           </div>
-                        )}
-                        <div className="flex justify-between">
-                          <span>Simulated Tariffs</span>
-                          <span>${order.tax.toFixed(2)}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Freight Logistics</span>
-                          <span>{order.shipping === 0 ? "FREE" : `$${order.shipping.toFixed(2)}`}</span>
-                        </div>
-                        <div className="flex justify-between text-white font-semibold text-xs border-t border-white/10 pt-2">
-                          <span className="text-[#C5A059]">Aggregate Paid</span>
-                          <span className="text-[#C5A059]">${order.total.toFixed(2)}</span>
-                        </div>
-                      </div>
 
-                      {/* Client Destination */}
-                      <div className="bg-white/5 p-2 text-[10px] text-white/40 border border-white/5 space-y-0.5 font-sans">
-                        <p className="text-white/70 font-semibold">{order.shippingAddress.fullName}</p>
-                        <p>{order.shippingAddress.addressLine}</p>
-                        <p>{order.shippingAddress.city}, {order.shippingAddress.postalCode}</p>
-                        <p className="text-[#C5A059] font-mono text-[9px] mt-1.5 uppercase">Simulated Method: {order.paymentMethod}</p>
+                        {/* Items */}
+                        <div className="space-y-1.5 mb-3.5 border-t border-b border-white/5 py-2">
+                          {order.items.map((item, idx) => (
+                            <div key={idx} className="flex justify-between text-white/70 text-[10px]">
+                              <span className="truncate max-w-[210px] text-white/80">
+                                {item.quantity}x {item.productName}
+                                {item.selectedColor && <span className="text-[9px] text-[#C5A059] uppercase ml-1">({item.selectedColor})</span>}
+                              </span>
+                              <span className="font-mono text-white/90">${(item.price * item.quantity).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Totals Breakdown list */}
+                        <div className="space-y-1 text-white/40 mb-3 text-[10px]">
+                          <div className="flex justify-between">
+                            <span>Subtotal</span>
+                            <span>${order.subtotal.toFixed(2)}</span>
+                          </div>
+                          {order.discount > 0 && (
+                            <div className="flex justify-between text-emerald-400">
+                              <span>Promo Saving</span>
+                              <span>-${order.discount.toFixed(2)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span>Regulatory Tariffs</span>
+                            <span>${order.tax.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Freight Delivery</span>
+                            <span>{order.shipping === 0 ? "FREE" : `$${order.shipping.toFixed(2)}`}</span>
+                          </div>
+                          <div className="flex justify-between text-[#C5A059] font-bold mt-1 text-[11px]">
+                            <span>Aggregate Paid</span>
+                            <span>${order.total.toFixed(2)}</span>
+                          </div>
+                        </div>
+
+                        {/* Client Destination */}
+                        <div className="bg-white/[0.02] p-2.5 text-[9.5px] text-white/40 border border-white/5 space-y-0.5 font-sans">
+                          <p className="text-white/70 font-semibold">{order.shippingAddress?.fullName}</p>
+                          <p className="truncate">{order.shippingAddress?.addressLine}</p>
+                          <p>{order.shippingAddress?.city}, {order.shippingAddress?.postalCode}</p>
+                          <p className="text-[#C5A059] font-mono text-[8.5px] mt-1 uppercase tracking-wider">Method: {order.paymentMethod}</p>
+                        </div>
                       </div>
-                    </div>
-                  ))
-                )}
+                    );
+                  });
+                })()}
               </div>
 
             </div>
@@ -1516,12 +2043,6 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-white/5 p-3 rounded-none border border-white/5 text-[10px] text-white/50 font-mono leading-relaxed space-y-1">
-                  <p className="font-semibold text-white/70">💡 Quick Evaluation Accounts:</p>
-                  <p>• username: <span className="text-[#C5A059] font-bold">curator</span> / password: <span className="text-[#C5A059] font-bold">curator</span> (Full profile)</p>
-                  <p>• username: <span className="text-[#C5A059] font-bold">demo</span> / password: <span className="text-[#C5A059] font-bold">demo</span> (Standard test)</p>
-                </div>
-
                 <button
                   id="btn-login-submit"
                   type="submit"
@@ -1595,19 +2116,7 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="space-y-1.5 text-left">
-                    <label className="text-[10px] text-white/40 uppercase tracking-widest block font-bold leading-none">Preferred Vibe Segment</label>
-                    <select
-                      id="input-register-vibe"
-                      value={registerForm.preferredVibe}
-                      onChange={(e) => setRegisterForm({ ...registerForm, preferredVibe: e.target.value })}
-                      className="bg-[#181818] border border-white/10 text-xs px-3 py-2.5 text-white/80 rounded-none w-full outline-none focus:border-[#C5A059]/50 cursor-pointer"
-                    >
-                      <option value="Minimalist Tech">Minimalist Tech</option>
-                      <option value="Lifestyle & Apparel">Lifestyle & Apparel</option>
-                      <option value="Curated Home">Curated Home</option>
-                    </select>
-                  </div>
+                  {/* Preferred vibe selector removed */}
                 </div>
 
                 <button
@@ -1634,6 +2143,73 @@ export default function App() {
         </div>
       )}
 
+      {/* --- MODAL E: USER PROFILE EDITOR --- */}
+      {isProfileModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto" id="profile-modal-wrapper">
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setIsProfileModalOpen(false)} />
+          <form 
+            onSubmit={handleProfileSave}
+            className="bg-[#121212] border border-white/10 p-8 max-w-md w-full relative z-10 shadow-2xl space-y-6 animate-fadeIn text-left"
+          >
+            <div className="flex justify-between items-center border-b border-white/10 pb-3">
+              <div>
+                <h3 className="font-serif text-lg text-white italic">Edit Vault Profile</h3>
+                <p className="text-[9px] text-[#C5A059] uppercase tracking-widest font-mono">Personal Identity Settings</p>
+              </div>
+              <button type="button" onClick={() => setIsProfileModalOpen(false)} className="p-2 border border-white/10 text-white/50 hover:text-white">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {profileError && <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] p-3 font-mono">{profileError}</div>}
+            {profileSuccess && <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] p-3 font-mono">{profileSuccess}</div>}
+
+            <div className="space-y-4 font-sans">
+              <div>
+                <label className="text-[10px] text-white/40 uppercase tracking-widest block font-bold mb-1.5">Full Name</label>
+                <input 
+                  type="text" 
+                  value={profileForm.fullName}
+                  onChange={(e) => setProfileForm({ ...profileForm, fullName: e.target.value })}
+                  className="bg-white/5 border border-white/10 text-xs px-3 py-2.5 text-white w-full outline-none focus:border-[#C5A059]/50"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 uppercase tracking-widest block font-bold mb-1.5">Preferred Vibe</label>
+                <select
+                  value={profileForm.preferredVibe}
+                  onChange={(e) => setProfileForm({ ...profileForm, preferredVibe: e.target.value })}
+                  className="bg-[#0A0A0A] border border-white/10 text-xs px-3 py-2.5 text-white w-full outline-none focus:border-[#C5A059]/50"
+                >
+                  <option value="All">All / Eclectic</option>
+                  <option value="Minimalist Tech">Minimalist Tech</option>
+                  <option value="Lifestyle & Apparel">Lifestyle & Apparel</option>
+                  <option value="Curated Home">Curated Home</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/40 uppercase tracking-widest block font-bold mb-1.5">Avatar Artwork URL</label>
+                <input 
+                  type="text" 
+                  placeholder="https://..."
+                  value={profileForm.avatarUrl}
+                  onChange={(e) => setProfileForm({ ...profileForm, avatarUrl: e.target.value })}
+                  className="bg-white/5 border border-white/10 text-xs px-3 py-2.5 text-white w-full outline-none focus:border-[#C5A059]/50 font-mono"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSavingProfile}
+              className="w-full bg-[#C5A059] text-[#0A0A0A] py-3 text-xs font-bold uppercase tracking-widest hover:bg-[#D1B072] transition"
+            >
+              {isSavingProfile ? "Saving Changes..." : "Update Vault Identity"}
+            </button>
+          </form>
+        </div>
+      )}
+
       {/* --- Aesthetic Status Block Footer --- */}
       <footer className="h-20 bg-black border-t border-white/10 flex flex-col sm:flex-row items-center justify-between px-10 text-[9px] uppercase tracking-[0.2em] text-white/30 flex-shrink-0 gap-3 py-4 sm:py-0 mt-20">
         <div className="flex gap-4 sm:gap-10 flex-wrap justify-center">
@@ -1647,6 +2223,50 @@ export default function App() {
           <a href="#" className="hover:text-[#C5A059] transition">Aura Journal</a>
         </div>
       </footer>
+
+      {/* Global Toast Notifications Container */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+        {toasts.map((toast) => {
+          let badgeColor = "bg-[#C5A059] text-black";
+          let borderColor = "border-[#C5A059]/30";
+          if (toast.type === "error") {
+            badgeColor = "bg-red-500 text-white";
+            borderColor = "border-red-500/40";
+          } else if (toast.type === "warning") {
+            badgeColor = "bg-amber-500 text-black";
+            borderColor = "border-amber-500/40";
+          } else if (toast.type === "info") {
+            badgeColor = "bg-blue-500 text-white";
+            borderColor = "border-blue-500/40";
+          }
+
+          return (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-[#121212]/95 backdrop-blur-md border ${borderColor} text-white px-4 py-3.5 shadow-2xl flex items-center justify-between gap-3.5 animate-slideInRight rounded-none font-mono text-[10px] font-medium`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`h-2 w-2 rounded-full shrink-0 ${
+                  toast.type === "error" 
+                    ? "bg-red-500" 
+                    : toast.type === "warning" 
+                    ? "bg-amber-400" 
+                    : toast.type === "info" 
+                    ? "bg-blue-400" 
+                    : "bg-[#C5A059]"
+                }`} />
+                <span className="select-none text-white/90 leading-relaxed text-left font-semibold">{toast.message}</span>
+              </div>
+              <button
+                onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}
+                className="text-white/40 hover:text-white shrink-0 p-1 hover:bg-white/5 cursor-pointer font-sans"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
 
     </div>
   );

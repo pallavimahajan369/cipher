@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ShoppingBag, Search, Sparkles, Clock, User, LogOut, ChevronDown, ShieldAlert } from "lucide-react";
+import { ShoppingBag, Search, Sparkles, Clock, User, LogOut, ChevronDown, ShieldAlert, Heart } from "lucide-react";
 
 export default function Navbar({
   cartCount,
@@ -15,7 +15,9 @@ export default function Navbar({
   onOpenLoginModal,
   onLogout,
   isAdminOpen,
-  onToggleAdmin
+  onOpenAdmin,
+  wishlistCount = 0,
+  onOpenWishlist
 }) {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const categories = ["All", "Minimalist Tech", "Lifestyle & Apparel", "Curated Home"];
@@ -26,7 +28,7 @@ export default function Navbar({
         <div className="flex items-center justify-between h-20">
           
           {/* Logo & Brand ID with Elegant Serif style */}
-          <div className="flex items-center gap-10 cursor-pointer" onClick={() => setActiveCategory("All")}>
+          <div className="flex items-center gap-10 cursor-pointer" onClick={() => { setActiveCategory("All"); if (onOpenAdmin) onOpenAdmin(false); }}>
             <span className="font-serif text-2xl tracking-tighter text-white italic">
               AURA<span className="text-[#C5A059] not-italic font-bold">.</span>
             </span>
@@ -37,7 +39,7 @@ export default function Navbar({
                 <button
                   id={`cat-btn-${cat.toLowerCase().replace(/[^a-z0-9]/g, "")}`}
                   key={cat}
-                  onClick={() => setActiveCategory(cat)}
+                  onClick={() => { setActiveCategory(cat); if (onOpenAdmin) onOpenAdmin(false); }}
                   className={`hover:text-white transition duration-200 cursor-pointer ${
                     activeCategory === cat ? "text-[#C5A059] font-bold" : ""
                   }`}
@@ -70,12 +72,29 @@ export default function Navbar({
             <button
               id="btn-trigger-ai"
               onClick={onOpenAdvisor}
-              className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-[#C5A059]/10 to-[#C5A059]/20 hover:from-[#C5A059]/20 hover:to-[#C5A059]/30 border border-[#C5A059]/30 text-[#C5A059] text-xs font-semibold uppercase tracking-wider transition-all duration-300 shadow-sm"
+              className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-[#C5A059]/10 to-[#C5A059]/20 hover:from-[#C5A059]/20 hover:to-[#C5A059]/30 border border-[#C5A059]/30 text-[#C5A059] text-xs font-semibold uppercase tracking-wider transition-all duration-300 shadow-sm cursor-pointer"
               title="Speak with Aura AI Advisor"
             >
               <Sparkles className="h-3.5 w-3.5 animate-pulse text-[#C5A059]" />
               <span className="hidden sm:inline">AI Advisor</span>
             </button>
+
+            {/* Admin Console Switcher - Exclusively shown for authenticated Administrators */}
+            {currentUser?.isAdmin && (
+              <button
+                id="btn-trigger-admin-panel"
+                onClick={() => onOpenAdmin ? onOpenAdmin(!isAdminOpen) : null}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full border text-xs font-semibold uppercase tracking-wider transition-all duration-300 shadow-sm cursor-pointer ${
+                  isAdminOpen 
+                    ? "bg-[#C5A059] text-black border-transparent font-bold" 
+                    : "bg-white/5 border border-white/10 text-white/85 hover:text-white hover:bg-white/10"
+                }`}
+                title="Aura Showroom and Catalog Admin Desk"
+              >
+                <ShieldAlert className={`h-3.5 w-3.5 ${isAdminOpen ? "text-black" : "text-[#C5A059]"}`} />
+                <span className="hidden md:inline">Admin Console</span>
+              </button>
+            )}
 
             {/* Member Account / Authentications Trigger */}
             <div className="relative">
@@ -175,20 +194,22 @@ export default function Navbar({
               )}
             </button>
 
-            {/* Admin Console Trigger */}
+            {/* Wishlist Trigger Button */}
             <button
-              id="btn-admin-panel-toggle"
-              onClick={onToggleAdmin}
-              className={`relative p-2.5 rounded-full border transition-all duration-300 flex items-center justify-center ${
-                isAdminOpen 
-                  ? "bg-[#C5A059]/10 border-[#C5A059]/35 text-[#C5A059]" 
-                  : "bg-white/5 border-white/10 text-white/70 hover:text-[#C5A059] hover:bg-white/10"
+              id="btn-navbar-wishlist"
+              onClick={onOpenWishlist}
+              className={`relative p-2.5 rounded-full border transition-all duration-300 flex items-center justify-center cursor-pointer ${
+                wishlistCount > 0 
+                  ? "bg-[#C5A059]/15 border-[#C5A059]/40 text-[#C5A059] hover:bg-[#C5A059]/25" 
+                  : "bg-white/5 border-white/10 text-white/70 hover:text-white hover:bg-white/10"
               }`}
-              title="Aura Vault Admin Console"
+              title="Your Curated Wishlist"
             >
-              <ShieldAlert className="h-4 w-4" />
-              {isAdminOpen && (
-                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#C5A059]" />
+              <Heart className={`h-4 w-4 ${wishlistCount > 0 ? "fill-current" : ""}`} />
+              {wishlistCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-[#C5A059] text-black text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center font-mono border border-black">
+                  {wishlistCount}
+                </span>
               )}
             </button>
 

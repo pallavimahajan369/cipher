@@ -1,5 +1,5 @@
 // Product Service manages product data records and user rating feedback logs.
-import { CURATED_PRODUCTS } from "../../src/data.ts";
+import { CURATED_PRODUCTS } from "../../shared/data.ts";
 import { isRealDb, query } from "../db.js";
 
 // In-memory fallback — only used when MySQL is unavailable (isRealDb() === false)

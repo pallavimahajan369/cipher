@@ -341,7 +341,7 @@ async function addColumnIfMissing(conn, table, column, definition) {
  */
 async function seedCatalog(conn) {
   console.log("[Aura DB] Seeding product records and verified reviews into MySQL tables…");
-  const { CURATED_PRODUCTS } = await import("../src/data.ts");
+  const { CURATED_PRODUCTS } = await import("../shared/data.ts");
 
   const productPlaceholders = [];
   const productData         = [];
