@@ -1,0 +1,8 @@
+{
+  "name": "Aura Curated Store",
+  "description": "A premium minimalist e-commerce store with seasonal collections, a smart shopping cart, direct checkout flows, and an interactive AI Shopping Assistant powered by Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

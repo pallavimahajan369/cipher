@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: aura-db
+    restart: always
+    environment:
+      MYSQL_DATABASE: aura_db
+      MYSQL_USER: aura_user
+      MYSQL_PASSWORD: aura_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - aura-db-data:/var/lib/mysql
+
+  app:
+    build: .
+    container_name: aura-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_USER=aura_user
+      - DB_PASSWORD=aura_password
+      - DB_NAME=aura_db
+      - JWT_SECRET=aura_premium_curation_secret_vibe
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ADMIN_PASSWORD=admin
+      - CURATOR_PASSWORD=curator
+    depends_on:
+      - db
+
+volumes:
+  aura-db-data:
