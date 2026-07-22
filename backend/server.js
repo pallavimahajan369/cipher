@@ -337,6 +337,14 @@ app.delete("/api/admin/products/:id", authenticateToken, requireAdmin, async (re
 });
 
 
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "healthy"
+  });
+});
+
+
+
 // FRONTEND EMBEDDED ENGINE
 async function bootstrapServer() {
   // Trigger MySQL dynamic initialization and catalog seed validation

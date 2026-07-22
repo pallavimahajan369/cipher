@@ -7,3 +7,4 @@ coverage/
 .env*
 !.env.example
 node_modules
+k8s/backend-secret.yaml
