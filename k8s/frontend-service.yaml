@@ -2,18 +2,16 @@ apiVersion: v1
 kind: Service
 
 metadata:
-  name: aura-backend-service
+  name: aura-frontend-service
   namespace: cipherwatch
 
 spec:
 
   selector:
-    app: aura-backend
+    app: aura-frontend
 
   ports:
-
-  - port: 3000
-    targetPort: 3000
-    
+  - port: 80
+    targetPort: 80
 
   type: ClusterIP

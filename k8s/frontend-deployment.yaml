@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aura-frontend
+  namespace: cipherwatch
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: aura-frontend
+
+  template:
+    metadata:
+      labels:
+        app: aura-frontend
+
+    spec:
+      containers:
+      - name: frontend
+
+        image: ditisscdac/cipherwatch-frontend:latest
+
+        imagePullPolicy: Always
+
+        ports:
+        - containerPort: 80
+
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+
+          limits:
+            cpu: "300m"
+            memory: "512Mi"
