@@ -30,7 +30,7 @@ export default function Navbar({
           {/* Logo & Brand ID with Elegant Serif style */}
           <div className="flex items-center gap-10 cursor-pointer" onClick={() => { setActiveCategory("All"); if (onOpenAdmin) onOpenAdmin(false); }}>
             <span className="font-serif text-2xl tracking-tighter text-white italic">
-              AURA<span className="text-[#C5A059] not-italic font-bold">.</span>
+              AURA-Testing<span className="text-[#C5A059] not-italic font-bold">.</span>
             </span>
             
             {/* Desktop Category Navigation */}
